@@ -8,7 +8,7 @@ public class AbsFunc3 extends scala.runtime.AbstractFunction2<Object, String, St
 	@Override
 	public String apply(Object arg0, String arg1) {
 		
-		return "Vertex:"+arg1;
+		return "Vertex:"+arg0+" "+arg1;
 	}
 	
 }

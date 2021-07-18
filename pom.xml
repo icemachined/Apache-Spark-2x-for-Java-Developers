@@ -97,7 +97,7 @@
 			<artifactId>tools</artifactId>
 			<version>${java-version}</version>
 			<scope>system</scope>
-			<systemPath>C:\\Program Files\\Java\\jdk1.8.0_65\\lib\\tools.jar</systemPath>
+			<systemPath>C:\\Program Files\\Zulu\\zulu-8\\lib\\tools.jar</systemPath>
 		</dependency>
 	</dependencies>
 

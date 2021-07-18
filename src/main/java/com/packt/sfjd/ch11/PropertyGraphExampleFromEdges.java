@@ -17,7 +17,7 @@ import scala.runtime.AbstractFunction1;
 
 public class PropertyGraphExampleFromEdges {
 	public static void main(String[] args) {
-		System.setProperty("hadoop.home.dir", "C:\\softwares\\Winutils");
+		//System.setProperty("hadoop.home.dir", "C:\\softwares\\Winutils");
 		SparkConf conf = new SparkConf().setMaster("local").setAppName("graph");
 		JavaSparkContext javaSparkContext = new JavaSparkContext(conf);
 		ClassTag<String> stringTag = scala.reflect.ClassTag$.MODULE$.apply(String.class);

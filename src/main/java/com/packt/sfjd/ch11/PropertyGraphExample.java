@@ -21,7 +21,7 @@ import scala.reflect.ClassTag;
 public class PropertyGraphExample {
 	public static void main(String[] args) {
 
-		System.setProperty("hadoop.home.dir", "C:\\softwares\\Winutils");
+		//System.setProperty("hadoop.home.dir", "C:\\softwares\\Winutils");
 		SparkConf conf = new SparkConf().setMaster("local").setAppName("graph");
 		JavaSparkContext javaSparkContext = new JavaSparkContext(conf);
 		ClassTag<String> stringTag = scala.reflect.ClassTag$.MODULE$.apply(String.class);
@@ -61,15 +61,15 @@ public class PropertyGraphExample {
 		
 		
 		graph.vertices().toJavaRDD().collect().forEach(System.out::println);
-		/*System.out.println("-------------------------------");
-		graph.edges().toJavaRDD().collect().forEach(System.out::println);*/
+		System.out.println("-------------------------------");
+		graph.edges().toJavaRDD().collect().forEach(System.out::println);
 		
 		//Graph operations
 		
 		//mapvertices
 		
-		/*Graph<String, String> mapVertices = graph.mapVertices(new AbsFunc3(), stringTag, tpEquals);
-		mapVertices.vertices().toJavaRDD().collect().forEach(System.out::println);*/
+		Graph<String, String> mapVertices = graph.mapVertices(new AbsFunc3(), stringTag, tpEquals);
+		mapVertices.vertices().toJavaRDD().collect().forEach(System.out::println);
 		
 		//mapEdges
 		
