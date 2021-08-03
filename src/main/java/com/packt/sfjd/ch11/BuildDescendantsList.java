@@ -1,11 +1,10 @@
 package com.packt.sfjd.ch11;
 
+import com.packt.sfjd.ch11.BuildDescendantsList.EmployeeMessage;
 import org.apache.spark.SparkConf;
 import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.api.java.JavaSparkContext;
-import org.apache.spark.graphx.Edge;
-import org.apache.spark.graphx.EdgeTriplet;
-import org.apache.spark.graphx.Graph;
+import org.apache.spark.graphx.*;
 import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.RowFactory;
@@ -15,19 +14,20 @@ import org.apache.spark.sql.types.Metadata;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.storage.StorageLevel;
-import scala.Predef;
+import scala.Function1;
+import scala.Function2;
 import scala.Tuple2;
+import scala.collection.AbstractIterator;
+import scala.collection.Iterator;
 import scala.reflect.ClassTag;
 
 import java.io.Serializable;
-import java.util.Arrays;
-import java.util.Iterator;
-import java.util.List;
+import java.util.*;
 
 import static org.apache.spark.sql.functions.*;
 
 public class BuildDescendantsList {
-	public static class Employee{
+	public static class Employee implements Serializable{
 		public String name;
 		public String role;
 
@@ -36,7 +36,7 @@ public class BuildDescendantsList {
 			this.role = role;
 		}
 	}
-	public static class EmployeeMessage {
+	public static class EmployeeMessage implements Serializable{
 		Long currentId; // Tracks the most recent vertex appended to path and used for flagging isCyclic
 		Integer level; // The number of up-line supervisors (level in reporting heirarchy)
 		String head; // The top-most supervisor
@@ -54,7 +54,7 @@ public class BuildDescendantsList {
 		}
 	}
 	// The structure of the vertex values of the graph
-	public static class EmployeeValue {
+	public static class EmployeeValue implements Cloneable, Serializable{
 		String name; // The employee name
 		Long currentId; // Initial value is the employeeId
 		Integer level; // Initial value is zero
@@ -72,6 +72,9 @@ public class BuildDescendantsList {
 			this.isCyclic = isCyclic;
 			this.isLeaf = isLeaf;
 		}
+		public EmployeeValue clone() {
+			return new EmployeeValue(name, currentId, level, head, new ArrayList(path), isCyclic, isLeaf);
+		}
 	}
 	public static class Emp2ValFn extends scala.runtime.AbstractFunction2<Object, Employee, EmployeeValue> implements Serializable {
 
@@ -80,16 +83,17 @@ public class BuildDescendantsList {
 
 			return new EmployeeValue(
 					v.name,
-					id,
+					(Long)id,
 					0,
 					v.name,
-					Arrays.asList(v.name),
+					Arrays.asList(id.toString()),
 					false,
 					false
 			);
 		}
 
 	}
+
 	public static void main(String[] args) {
 		//System.setProperty("hadoop.home.dir", "C:\\softwares\\Winutils");
 		SparkConf conf = new SparkConf().setMaster("local[4]").setAppName("graph");
@@ -99,6 +103,8 @@ public class BuildDescendantsList {
 		ClassTag<String> stringTag = scala.reflect.ClassTag$.MODULE$.apply(String.class);
 		ClassTag<Employee> empTag = scala.reflect.ClassTag$.MODULE$.apply(Employee.class);
 		ClassTag<EmployeeValue> empvTag = scala.reflect.ClassTag$.MODULE$.apply(EmployeeValue.class);
+		ClassTag<EmployeeMessage> empmTag = scala.reflect.ClassTag$.MODULE$.apply(EmployeeMessage.class);
+		ClassTag<Row> rowTag = scala.reflect.ClassTag$.MODULE$.apply(Row.class);
 
 		List<Row> dataTraining = Arrays.asList(
 				RowFactory.create(1L, "Steve", "Jobs", "CEO", 1L),
@@ -121,7 +127,7 @@ public class BuildDescendantsList {
 		});
 		Dataset<Row> employeeDF = spark.createDataFrame(dataTraining, schema);
 		JavaRDD<Tuple2<Object, Employee>> verticesRDD = employeeDF.select(col("employeeId"), concat(col("firstName"), lit(" "), col("lastName")), col("role")).javaRDD()
-				.map(emp -> new Tuple2(emp.getLong(0), new Employee(emp.getString(1), emp.getString(2)));
+				.map(emp -> new Tuple2(emp.getLong(0), new Employee(emp.getString(1), emp.getString(2))));
 		JavaRDD<Edge<String>> edgesRDD = employeeDF.select(col("supervisorId"), col("employeeId"), col("role")).javaRDD()
 				.map(emp -> new Edge(emp.getLong(0), emp.getLong(1), emp.getString(2)));
 
@@ -138,93 +144,137 @@ public class BuildDescendantsList {
 
 // add more dummy attributes to the vertices - id, level, root, path, iscyclic, existing value of current vertex to build path, isleaf, pk
 		Graph<EmployeeValue, String> employeeValueGraph  = employeeGraph.mapVertices ( new Emp2ValFn(), empvTag, null); //
-//		val hrchyrdd = initialgraph.pregel(initialmsg,
-//				int.maxvalue,
-//				edgedirection.out)(
-//				setmsg,
-//				sendmsg,
-//				mergemsg)
-//
-//
-//// build the path from the list
-//		val hrchyoutrdd = hrchyrdd.vertices.map{case(id,v) => (v._8,(v._2,v._3,pathseperator + v._4.reverse.mkstring(pathseperator),v._5, v._7 )) }
+		EmployeeMessage initialMsg = new EmployeeMessage(
+				0L,
+				0,
+				"",
+				new ArrayList<>(),
+				false,
+				true
+		);
 
+		Graph<EmployeeValue, String> results = Pregel.apply(employeeValueGraph,
+				initialMsg, Integer.MAX_VALUE, EdgeDirection.Out(),
+				new Vprog(), new SendMsg(), new MergeMsg(),
+				empvTag, stringTag, empmTag);
+		Dataset<Row> resultDf = spark.createDataFrame(results.vertices().map(new MapResults(), rowTag), new StructType(new StructField[]{
+				new StructField("id", DataTypes.LongType, false, Metadata.empty()),
+				new StructField("employee", DataTypes.StringType, false, Metadata.empty()),
+				new StructField("level", DataTypes.IntegerType, false, Metadata.empty()),
+				new StructField("head", DataTypes.StringType, false, Metadata.empty()),
+				new StructField("path", DataTypes.StringType, false, Metadata.empty()),
+				new StructField("cyclic", DataTypes.BooleanType, false, Metadata.empty()),
+				new StructField("leaf", DataTypes.BooleanType, false, Metadata.empty())
+		}));
+		resultDf.show();
+	}
+	public static class MapResults extends scala.runtime.AbstractFunction1<Tuple2<Object, EmployeeValue>, Row> implements Serializable {
 
-//	graph.aggregateMessages(sendMsg, mergeMsg, tripletFields, evidence$11)	
-		
+		@Override
+		public Row apply(Tuple2<Object, EmployeeValue> t) {
+			EmployeeValue v = t._2;
+			return RowFactory.create( t._1, v.name, v.level, v.head, String.join(">", v.path), v.isCyclic, v.isLeaf);
+		}
 	}
 
 	/**
 	 * Step 1: Mutate the value of the vertices, based on the message received
 	 */
-	public static void vprog(
-			vertexId: VertexId,
-			value: EmployeeValue,
-			message: EmployeeMessage
-	): EmployeeValue = {
-		if (message.level == 0) { //superstep 0 - initialize
-			value.copy(level = value.level + 1)
-		} else if (message.isCyclic) { // set isCyclic
-			value.copy(isCyclic = true)
-		} else if (!message.isLeaf) { // set isleaf
-			value.copy(isLeaf = false)
-		} else { // set new values
-			value.copy(
-					currentId = message.currentId,
-					level = value.level + 1,
-					head = message.head,
-					path = value.name :: message.path
-    )
+	public static class Vprog extends scala.runtime.AbstractFunction3<Object, EmployeeValue, EmployeeMessage, EmployeeValue> implements Serializable {
+
+		@Override
+		public EmployeeValue apply(
+				Object vertexId,
+				EmployeeValue value,
+				EmployeeMessage message
+		) {
+			EmployeeValue newVal = value.clone();
+			if (message.level == 0) { //superstep 0 - initialize
+				newVal.level++;
+			} else if (message.isCyclic) { // set isCyclic
+				newVal.isCyclic = true;
+			} else if (!message.isLeaf) { // set isleaf
+				newVal.isLeaf = false;
+			} else { // set new values
+				newVal.currentId = message.currentId;
+				newVal.level = value.level + 1;
+				newVal.head = message.head;
+				ArrayList<String> newPath = new ArrayList<>(message.path.size()+1);
+				newPath.add(vertexId.toString());
+				newPath.addAll(message.path);
+				newVal.path = newPath;
+			}
+			return newVal;
 		}
 	}
+
 	/**
 	 * Step 2: For all triplets that received a message -- meaning, any of the two vertices
 	 * received a message from the previous step -- then compose and send a message.
 	 */
-	public static Iterator<Tuple2<Object, EmployeeMessage>> sendMsg(
-			 EdgeTriplet<EmployeeValue, String> triplet
-	) {
-		EmployeeValue src = triplet.srcAttr();
-		EmployeeValue dst = triplet.dstAttr();
-		// Handle cyclic reporting structure
-		if (src.currentId == triplet.dstId() || src.currentId == dst.currentId) {
-			if (!src.isCyclic) { // Set isCyclic
-				return new Iterator((triplet.dstId(), new EmployeeMessage(
-						src.currentId,
-						src.level,
-						src.head,
-						src.path,
-						true,
-						src.isLeaf
-				)));
-			} else { // Already marked as isCyclic (possibly, from previous superstep) so ignore
-				Iterator.empty
-			}
-		} else { // Regular reporting structure
-			if (src.isLeaf) { // Initially every vertex is leaf. Since this is a source then it should NOT be a leaf, update
-				Iterator((triplet.srcId, EmployeeMessage(
-						currentId = src.currentId,
-						level = src.level,
-						head = src.head,
-						path = src.path,
-						isCyclic = false,
-						isLeaf = false // This is the only important value here
-				)))
-			} else { // Set new values by propagating source values to destination
-				//Iterator.empty
-				Iterator((triplet.dstId, EmployeeMessage(
-						currentId = src.currentId,
-						level = src.level,
-						head = src.head,
-						path = src.path,
-						isCyclic = false, // Set to false so that cyclic updating is ignored in vprog
-						isLeaf = true // Set to true so that leaf updating is ignored in vprog
-				)))
+
+	public static class SendMsg extends scala.runtime.AbstractFunction1<EdgeTriplet<EmployeeValue, String>, Iterator<Tuple2<Object, EmployeeMessage>>> implements Serializable {
+
+		@Override
+		public Iterator<Tuple2<Object, EmployeeMessage>> apply(
+				EdgeTriplet<EmployeeValue, String> triplet
+		) {
+			EmployeeValue src = triplet.srcAttr();
+			EmployeeValue dst = triplet.dstAttr();
+			// Handle cyclic reporting structure
+			if (src.currentId == triplet.dstId() || src.currentId == dst.currentId) {
+				if (!src.isCyclic) { // Set isCyclic
+					return Iterator.single(new Tuple2(triplet.dstId(), new EmployeeMessage(
+							src.currentId,
+							src.level,
+							src.head,
+							src.path,
+							true,
+							src.isLeaf
+					)));
+				} else { // Already marked as isCyclic (possibly, from previous superstep) so ignore
+					return new AbstractIterator<Tuple2<Object, EmployeeMessage>>() {
+						public boolean hasNext() {
+							return false;
+						}
+
+						@Override
+						public Tuple2<Object, EmployeeMessage> next() {
+							throw new NoSuchElementException("next on empty iterator");
+						}
+					};
+				}
+			} else { // Regular reporting structure
+				if (src.isLeaf) { // Initially every vertex is leaf. Since this is a source then it should NOT be a leaf, update
+					return Iterator.single(new Tuple2(triplet.srcId(), new EmployeeMessage(
+							src.currentId,
+							src.level,
+							src.head,
+							src.path,
+							false,
+							false // This is the only important value here
+					)));
+				} else { // Set new values by propagating source values to destination
+					//Iterator.empty
+					return Iterator.single(new Tuple2(triplet.dstId(), new EmployeeMessage(
+							src.currentId,
+							src.level,
+							src.head,
+							src.path,
+							false, // Set to false so that cyclic updating is ignored in vprog
+							true // Set to true so that leaf updating is ignored in vprog
+					)));
+				}
 			}
 		}
 	}
 	/**
 	 * Step 3: Merge all inbound messages to a vertex. No special merging needed for this use case.
 	 */
-	public static EmployeeMessage mergeMsg(EmployeeMessage msg1, EmployeeMessage msg2) { return msg2; }
+
+	public static class MergeMsg extends scala.runtime.AbstractFunction2<EmployeeMessage, EmployeeMessage, EmployeeMessage> implements Serializable {
+
+		@Override
+		public EmployeeMessage apply(EmployeeMessage msg1, EmployeeMessage msg2) { return msg2; }
+	}
 }

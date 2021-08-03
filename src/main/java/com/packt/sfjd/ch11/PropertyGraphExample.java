@@ -68,8 +68,8 @@ public class PropertyGraphExample {
 		
 		//mapvertices
 		
-		Graph<String, String> mapVertices = graph.mapVertices(new AbsFunc3(), stringTag, tpEquals);
-		mapVertices.vertices().toJavaRDD().collect().forEach(System.out::println);
+		//Graph<String, String> mapVertices = graph.mapVertices(new AbsFunc3(), stringTag, tpEquals);
+		//mapVertices.vertices().toJavaRDD().collect().forEach(System.out::println);
 		
 		//mapEdges
 		
@@ -126,7 +126,7 @@ public class PropertyGraphExample {
 		//graph.ops().pageRank(0.00001,0.20).vertices().toJavaRDD().collect().forEach(System.out::println);;
 		
 		//Triangle count
-		graph.partitionBy(PartitionStrategy.CanonicalRandomVertexCut$.MODULE$);
+		//graph.partitionBy(PartitionStrategy.CanonicalRandomVertexCut$.MODULE$);
 		
 		Graph<Object, String> triangleCountedGraph = graph.ops().triangleCount();
 		triangleCountedGraph.vertices().toJavaRDD().collect().forEach(System.out::println);

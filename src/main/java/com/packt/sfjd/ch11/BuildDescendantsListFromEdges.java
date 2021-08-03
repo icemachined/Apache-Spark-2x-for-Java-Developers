@@ -69,10 +69,10 @@ public class BuildDescendantsListFromEdges {
 		
 		graph.vertices().toJavaRDD().collect().forEach(System.out::println);
 
-		Row initialmsg = RowFactory.create((0l,0,0,1);
+//		Row initialmsg = RowFactory.create((0l,0,0,1);
 
 // add more dummy attributes to the vertices - id, level, root, path, iscyclic, existing value of current vertex to build path, isleaf, pk
-		Graph<String, String> initialgraph = graph.mapVertices((id, v) -> RowFactory.create(id, 0, id, 0, v, 1, id), stringTag, Predef.$eq$colon$eq$.MODULE$.tpEquals());
+//		Graph<String, String> initialgraph = graph.mapVertices((id, v) -> RowFactory.create(id, 0, id, 0, v, 1, id), stringTag, Predef.$eq$colon$eq$.MODULE$.tpEquals());
 //
 //		val hrchyrdd = initialgraph.pregel(initialmsg,
 //				int.maxvalue,
