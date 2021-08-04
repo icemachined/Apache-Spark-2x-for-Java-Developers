@@ -19,12 +19,14 @@ import scala.collection.Iterator;
 import scala.reflect.ClassTag;
 
 import java.io.Serializable;
-import java.util.*;
-import java.util.stream.Collectors;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+import java.util.NoSuchElementException;
 
 import static org.apache.spark.sql.functions.*;
 
-public class BuildDescendantsList {
+public class BuildParentsList {
 	public static class Employee implements Serializable{
 		public String name;
 		public String role;
@@ -38,31 +40,17 @@ public class BuildDescendantsList {
 		Long currentId; // Tracks the most recent vertex appended to path and used for flagging isCyclic
 		Integer level; // The number of up-line supervisors (level in reporting heirarchy)
 		String head; // The top-most supervisor
-		Map<Long, List<Descendant>> descendants; // The reporting path to the the top-most supervisor
+		List<String> path; // The reporting path to the the top-most supervisor
 		Boolean isCyclic; // Is the reporting structure of the employee cyclic
 		Boolean isLeaf; // Is the employee rank and file (no down-line reporting employee)
 
-		public EmployeeMessage(Long currentId, Integer level, String head, Map<Long, List<Descendant>> descendants, Boolean isCyclic, Boolean isLeaf) {
+		public EmployeeMessage(Long currentId, Integer level, String head, List<String> path, Boolean isCyclic, Boolean isLeaf) {
 			this.currentId = currentId;
 			this.level = level;
 			this.head = head;
-			this.descendants = descendants;
+			this.path = path;
 			this.isCyclic = isCyclic;
 			this.isLeaf = isLeaf;
-		}
-	}
-	public static class Descendant implements Serializable {
-		final Long vertexId;
-		final Integer level;
-
-		public Descendant(Long vertexId, Integer level) {
-			this.vertexId = vertexId;
-			this.level = level;
-		}
-
-		@Override
-		public String toString() {
-			return "(" + vertexId +", " + level + ')';
 		}
 	}
 	// The structure of the vertex values of the graph
@@ -71,41 +59,34 @@ public class BuildDescendantsList {
 		Long currentId; // Initial value is the employeeId
 		Integer level; // Initial value is zero
 		String head; // Initial value is this employee's name
-		Map<Long, List<Descendant>> descendants; // Initial value contains this employee's name only
+		List<String> path; // Initial value contains this employee's name only
 		Boolean isCyclic; // Initial value is false
 		Boolean isLeaf;  // Initial value is true
 
-		public EmployeeValue(String name, Long currentId, Integer level, String head, Map<Long, List<Descendant>> descendants, Boolean isCyclic, Boolean isLeaf) {
+		public EmployeeValue(String name, Long currentId, Integer level, String head, List<String> path, Boolean isCyclic, Boolean isLeaf) {
 			this.name = name;
 			this.currentId = currentId;
 			this.level = level;
 			this.head = head;
-			this.descendants = descendants;
+			this.path = path;
 			this.isCyclic = isCyclic;
 			this.isLeaf = isLeaf;
 		}
 		public EmployeeValue clone() {
-			return new EmployeeValue(name, currentId, level, head,
-					descendants.entrySet().stream().collect(Collectors.toMap(
-						e -> e.getKey(),
-						e -> new ArrayList<>(e.getValue()))),
-					isCyclic, isLeaf);
-		}
-
-		public List<Descendant> buildDescendantsFlatList() {
-			return descendants.values().stream().flatMap(Collection::stream).collect(Collectors.toList());
+			return new EmployeeValue(name, currentId, level, head, new ArrayList(path), isCyclic, isLeaf);
 		}
 	}
 	public static class Emp2ValFn extends scala.runtime.AbstractFunction2<Object, Employee, EmployeeValue> implements Serializable {
 
 		@Override
 		public EmployeeValue apply(Object id, Employee v) {
+
 			return new EmployeeValue(
 					v.name,
 					(Long)id,
 					0,
 					v.name,
-					new HashMap<>(),
+					Arrays.asList(id.toString()),
 					false,
 					true
 			);
@@ -126,16 +107,16 @@ public class BuildDescendantsList {
 		ClassTag<Row> rowTag = scala.reflect.ClassTag$.MODULE$.apply(Row.class);
 
 		List<Row> dataTraining = Arrays.asList(
-				RowFactory.create(1L, "Steve", "Jobs", "CEO", 1L),
-				RowFactory.create(2L, "Leslie", "Lamport", "CTO", 1L),
-				RowFactory.create(3L, "Jason", "Fried", "Manager", 1L),
-				RowFactory.create(4L, "Joel", "Spolsky", "Manager", 2L),
-				RowFactory.create(5L, "Jeff", "Dean", "Lead", 4L),
+				//RowFactory.create(1L, "Steve", "Jobs", "CEO", 1L),
+				//RowFactory.create(2L, "Leslie", "Lamport", "CTO", 1L),
+				//RowFactory.create(3L, "Jason", "Fried", "Manager", 1L),
+				//RowFactory.create(4L, "Joel", "Spolsky", "Manager", 2L)
+				RowFactory.create(5L, "Jeff", "Dean", "Lead", 5L),
 				RowFactory.create(6L, "Martin", "Odersky", "Sr.Dev", 5L),
 				RowFactory.create(7L, "Linus", "Trovalds", "Dev", 6L),
-				RowFactory.create(8L, "Steve", "Wozniak", "Dev", 6L),
-				RowFactory.create(9L, "Matei", "Zaharia", "Dev", 6L),
-				RowFactory.create(10L, "James", "Faeldon", "Intern", 7L)
+				RowFactory.create(8L, "Steve", "Wozniak", "Dev", 6L)
+				//RowFactory.create(9L, "Matei", "Zaharia", "Dev", 6L),
+				//RowFactory.create(10L, "James", "Faeldon", "Intern", 7L)
 		);
 		StructType schema = new StructType(new StructField[]{
 				new StructField("employeeId", DataTypes.LongType, false, Metadata.empty()),
@@ -147,7 +128,7 @@ public class BuildDescendantsList {
 		Dataset<Row> employeeDF = spark.createDataFrame(dataTraining, schema);
 		JavaRDD<Tuple2<Object, Employee>> verticesRDD = employeeDF.select(col("employeeId"), concat(col("firstName"), lit(" "), col("lastName")), col("role")).javaRDD()
 				.map(emp -> new Tuple2(emp.getLong(0), new Employee(emp.getString(1), emp.getString(2))));
-		JavaRDD<Edge<String>> edgesRDD = employeeDF.select(col("employeeId"), col("supervisorId"), col("role")).javaRDD()
+		JavaRDD<Edge<String>> edgesRDD = employeeDF.select(col("supervisorId"), col("employeeId"), col("role")).javaRDD()
 				.map(emp -> new Edge(emp.getLong(0), emp.getLong(1), emp.getString(2)));
 
 
@@ -167,7 +148,7 @@ public class BuildDescendantsList {
 				0L,
 				0,
 				"",
-				new HashMap<>(),
+				new ArrayList<>(),
 				false,
 				true
 		);
@@ -185,16 +166,14 @@ public class BuildDescendantsList {
 				new StructField("cyclic", DataTypes.BooleanType, false, Metadata.empty()),
 				new StructField("leaf", DataTypes.BooleanType, false, Metadata.empty())
 		}));
-		resultDf.show(false);
+		resultDf.show();
 	}
 	public static class MapResults extends scala.runtime.AbstractFunction1<Tuple2<Object, EmployeeValue>, Row> implements Serializable {
 
 		@Override
 		public Row apply(Tuple2<Object, EmployeeValue> t) {
 			EmployeeValue v = t._2;
-			Long vertexId = (Long) t._1;
-			List<String> finalDescendants = buildLevelUpDescendants(vertexId, v.buildDescendantsFlatList()).stream().map(Objects::toString).collect(Collectors.toList());
-			return RowFactory.create( t._1, v.name, v.level, v.head, String.join(">", finalDescendants), v.isCyclic, v.isLeaf);
+			return RowFactory.create( t._1, v.name, v.level, v.head, String.join(">", v.path), v.isCyclic, v.isLeaf);
 		}
 	}
 
@@ -220,19 +199,13 @@ public class BuildDescendantsList {
 				newVal.currentId = message.currentId;
 				newVal.level = value.level + 1;
 				newVal.head = message.head;
-				newVal.descendants.putAll(message.descendants);
+				ArrayList<String> newPath = new ArrayList<>(message.path.size()+1);
+				newPath.add(vertexId.toString());
+				newPath.addAll(message.path);
+				newVal.path = newPath;
 			}
 			return newVal;
 		}
-	}
-
-	private static ArrayList<Descendant> buildLevelUpDescendants(Long vertexId, List<Descendant> descendants) {
-		ArrayList<Descendant> descList = new ArrayList<>();
-		descList.add(new Descendant(vertexId, 1));
-		for(Descendant d: descendants) {
-			descList.add(new Descendant(d.vertexId, d.level + 1));
-		}
-		return descList;
 	}
 
 	/**
@@ -255,7 +228,7 @@ public class BuildDescendantsList {
 							src.currentId,
 							src.level,
 							src.head,
-							src.descendants,
+							src.path,
 							true,
 							src.isLeaf
 					)));
@@ -277,19 +250,17 @@ public class BuildDescendantsList {
 							src.currentId,
 							src.level,
 							src.head,
-							src.descendants,
+							src.path,
 							false,
 							false // This is the only important value here
 					)));
 				} else { // Set new values by propagating source values to destination
-					HashMap<Long, List<Descendant>> m = new HashMap<>();
-					m.put(triplet.srcId(), buildLevelUpDescendants(triplet.srcId(), src.buildDescendantsFlatList()));
 					//Iterator.empty
 					return Iterator.single(new Tuple2(triplet.dstId(), new EmployeeMessage(
 							src.currentId,
 							src.level,
 							src.head,
-							m,
+							src.path,
 							false, // Set to false so that cyclic updating is ignored in vprog
 							true // Set to true so that leaf updating is ignored in vprog
 					)));
@@ -305,7 +276,6 @@ public class BuildDescendantsList {
 
 		@Override
 		public EmployeeMessage apply(EmployeeMessage msg1, EmployeeMessage msg2) {
-			msg2.descendants.putAll(msg1.descendants);
 			return msg2;
 		}
 	}
